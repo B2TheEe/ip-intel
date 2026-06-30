@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IP Intel</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1><span class="accent">&gt;_</span> IP Intel</h1>
+      <p class="subtitle">WHOIS · ASN · Geolocation · Reverse DNS</p>
+    </header>
+
+    <div class="search-box">
+      <input type="text" id="target" placeholder="Enter IP or domain (e.g. 8.8.8.8 or example.com)" autocomplete="off" spellcheck="false">
+      <button id="scan-btn" onclick="runRecon()">Scan</button>
+    </div>
+
+    <div id="error-banner" class="error-banner hidden"></div>
+    <div id="loading" class="loading hidden">
+      <span class="spinner"></span> Querying...
+    </div>
+
+    <div id="results" class="hidden">
+      <!-- Summary bar -->
+      <div class="summary-bar">
+        <div class="summary-item">
+          <span class="label">Target</span>
+          <span id="s-target" class="value mono"></span>
+        </div>
+        <div class="summary-item">
+          <span class="label">IP</span>
+          <span id="s-ip" class="value mono accent"></span>
+        </div>
+        <div class="summary-item">
+          <span class="label">Hostname</span>
+          <span id="s-hostname" class="value mono"></span>
+        </div>
+        <div class="summary-item">
+          <span class="label">Country</span>
+          <span id="s-country" class="value"></span>
+        </div>
+        <div class="summary-item">
+          <span class="label">ASN</span>
+          <span id="s-asn" class="value mono"></span>
+        </div>
+      </div>
+
+      <!-- Panels -->
+      <div class="panels">
+        <!-- WHOIS -->
+        <div class="panel">
+          <h2><span class="accent">01</span> WHOIS</h2>
+          <div id="whois-content"></div>
+        </div>
+
+        <!-- ASN -->
+        <div class="panel">
+          <h2><span class="accent">02</span> ASN / Network</h2>
+          <div id="asn-content"></div>
+        </div>
+
+        <!-- Geo -->
+        <div class="panel">
+          <h2><span class="accent">03</span> Geolocation</h2>
+          <div id="geo-content"></div>
+        </div>
+
+        <!-- Reverse DNS -->
+        <div class="panel">
+          <h2><span class="accent">04</span> Reverse DNS</h2>
+          <div id="rdns-content"></div>
+        </div>
+      </div>
+
+      <!-- Raw WHOIS -->
+      <div class="panel raw-panel">
+        <h2><span class="accent">05</span> Raw WHOIS
+          <button class="toggle-btn" onclick="toggleRaw()">show</button>
+        </h2>
+        <pre id="raw-whois" class="raw hidden"></pre>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+
+    async function runRecon() {
+      const target = $('target').value.trim();
+      if (!target) return;
+
+      $('error-banner').classList.add('hidden');
+      $('results').classList.add('hidden');
+      $('loading').classList.remove('hidden');
+      $('scan-btn').disabled = true;
+
+      try {
+        const resp = await fetch('/api/recon', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target})
+        });
+        const data = await resp.json();
+        $('loading').classList.add('hidden');
+        $('scan-btn').disabled = false;
+
+        if (data.error) {
+          showError(data.error);
+          return;
+        }
+        renderResults(data);
+      } catch (e) {
+        $('loading').classList.add('hidden');
+        $('scan-btn').disabled = false;
+        showError('Request failed: ' + e.message);
+      }
+    }
+
+    function showError(msg) {
+      const el = $('error-banner');
+      el.textContent = '! ' + msg;
+      el.classList.remove('hidden');
+    }
+
+    function renderResults(d) {
+      // Summary
+      $('s-target').textContent = d.target || '—';
+      $('s-ip').textContent = d.ip || '—';
+      $('s-hostname').textContent = d.hostname || '—';
+      $('s-country').textContent = d.geo?.country ? `${d.geo.country} (${d.geo.country_code})` : '—';
+      $('s-asn').textContent = d.asn?.asn ? `AS${d.asn.asn}` : '—';
+
+      // WHOIS
+      const w = d.whois || {};
+      $('whois-content').innerHTML = w.error && !w.registrar
+        ? err(w.error)
+        : table([
+            ['Registrar', w.registrar],
+            ['Org', w.org],
+            ['Country', w.country],
+            ['Created', arr(w.creation_date)],
+            ['Expires', arr(w.expiration_date)],
+            ['Updated', arr(w.updated_date)],
+            ['Status', (w.status || []).join('<br>')],
+            ['Name Servers', (w.name_servers || []).join('<br>')],
+            ['Emails', (w.emails || []).join('<br>')],
+          ]);
+
+      if (w.raw) {
+        $('raw-whois').textContent = w.raw;
+      }
+
+      // ASN
+      const a = d.asn || {};
+      $('asn-content').innerHTML = a.error
+        ? err(a.error)
+        : table([
+            ['ASN', a.asn ? 'AS' + a.asn : null],
+            ['Description', a.asn_description],
+            ['CIDR', a.asn_cidr],
+            ['Country', a.asn_country],
+            ['Registry', a.asn_registry],
+            ['Network Name', a.network_name],
+            ['Network CIDR', a.network_cidr],
+            ['Network Type', a.network_type],
+            ['Abuse Emails', (a.abuse_emails || []).join('<br>')],
+          ]);
+
+      // Geo
+      const g = d.geo || {};
+      $('geo-content').innerHTML = g.error
+        ? err(g.error)
+        : `<div class="geo-map-hint">📍 ${g.lat}, ${g.lon}</div>` + table([
+            ['City', g.city],
+            ['Region', g.region],
+            ['Country', g.country ? `${g.country} (${g.country_code})` : null],
+            ['ZIP', g.zip],
+            ['ISP', g.isp],
+            ['Org', g.org],
+            ['AS', g.as],
+          ]);
+
+      // Reverse DNS
+      const r = d.reverse_dns || {};
+      $('rdns-content').innerHTML = r.error
+        ? err(r.error)
+        : table([['PTR Record', r.hostname]]);
+
+      $('results').classList.remove('hidden');
+    }
+
+    function table(rows) {
+      const filtered = rows.filter(([, v]) => v != null && v !== '' && v !== '[]');
+      if (!filtered.length) return '<p class="empty">No data</p>';
+      return '<table>' + filtered.map(([k, v]) =>
+        `<tr><td class="key">${k}</td><td class="val mono">${v ?? '—'}</td></tr>`
+      ).join('') + '</table>';
+    }
+
+    function err(msg) {
+      return `<p class="err-text">${msg}</p>`;
+    }
+
+    function arr(v) {
+      if (!v) return null;
+      return Array.isArray(v) ? v[0] : v;
+    }
+
+    function toggleRaw() {
+      const el = $('raw-whois');
+      const btn = document.querySelector('.toggle-btn');
+      el.classList.toggle('hidden');
+      btn.textContent = el.classList.contains('hidden') ? 'show' : 'hide';
+    }
+
+    $('target').addEventListener('keydown', e => {
+      if (e.key === 'Enter') runRecon();
+    });
+  </script>
+</body>
+</html>
