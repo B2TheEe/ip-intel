@@ -2,6 +2,7 @@ from flask import Flask, render_template, request, jsonify
 from recon.lookup import run_all, resolve_target
 from recon.portscan import run_scan
 from recon.dns_enum import run_dns_enum
+from recon.ssl_inspect import inspect as ssl_inspect
 
 app = Flask(__name__)
 
@@ -50,6 +51,17 @@ def dnsenum():
     target = target.replace("https://", "").replace("http://", "").split("/")[0]
     results = run_dns_enum(target, brute=brute, wordlist=wordlist)
     return jsonify(results)
+
+
+@app.route("/api/sslinspect", methods=["POST"])
+def sslinspect():
+    data = request.get_json()
+    target = (data.get("target") or "").strip().replace("https://", "").replace("http://", "").split("/")[0]
+    port = int(data.get("port") or 443)
+    if not target:
+        return jsonify({"error": "No target provided"}), 400
+    result = ssl_inspect(target, port)
+    return jsonify(result)
 
 
 if __name__ == "__main__":

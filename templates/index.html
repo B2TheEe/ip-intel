@@ -10,7 +10,7 @@
   <div class="container">
     <header>
       <h1><span class="accent">&gt;_</span> IP Intel</h1>
-      <p class="subtitle">WHOIS · ASN · Geolocation · Reverse DNS · Port Scan · DNS Enum</p>
+      <p class="subtitle">WHOIS · ASN · Geo · rDNS · Ports · DNS · SSL/TLS</p>
     </header>
 
     <div class="search-box">
@@ -124,9 +124,21 @@
         </div>
       </div>
 
+      <!-- SSL/TLS Inspection -->
+      <div class="panel ssl-panel">
+        <h2><span class="accent">07</span> SSL/TLS Certificate
+          <div class="ssl-port-row">
+            <input type="number" id="ssl-port" class="ssl-port-input" value="443" min="1" max="65535">
+            <button class="port-scan-btn" id="ssl-scan-btn" onclick="runSslInspect()">Inspect</button>
+          </div>
+        </h2>
+        <div id="ssl-loading" class="loading hidden"><span class="spinner"></span> Connecting...</div>
+        <div id="ssl-results"></div>
+      </div>
+
       <!-- Raw WHOIS -->
       <div class="panel raw-panel">
-        <h2><span class="accent">07</span> Raw WHOIS
+        <h2><span class="accent">08</span> Raw WHOIS
           <button class="toggle-btn" onclick="toggleRaw()">show</button>
         </h2>
         <pre id="raw-whois" class="raw hidden"></pre>
@@ -343,6 +355,94 @@
 
     function escHtml(s) {
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // SSL/TLS Inspection
+    async function runSslInspect() {
+      const target = $('target').value.trim();
+      if (!target) { showError('Enter a target first'); return; }
+      const port = parseInt($('ssl-port').value) || 443;
+
+      $('ssl-loading').classList.remove('hidden');
+      $('ssl-results').innerHTML = '';
+      $('ssl-scan-btn').disabled = true;
+
+      try {
+        const resp = await fetch('/api/sslinspect', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target, port})
+        });
+        const data = await resp.json();
+        $('ssl-loading').classList.add('hidden');
+        $('ssl-scan-btn').disabled = false;
+        if (data.error) { $('ssl-results').innerHTML = err(data.error); return; }
+        renderSslResults(data);
+      } catch (e) {
+        $('ssl-loading').classList.add('hidden');
+        $('ssl-scan-btn').disabled = false;
+        $('ssl-results').innerHTML = err('Request failed: ' + e.message);
+      }
+    }
+
+    function renderSslResults(d) {
+      const expClass = d.is_expired ? 'ssl-expired' : d.expiry_warning ? 'ssl-warn' : 'open';
+      const expLabel = d.is_expired ? 'EXPIRED' : d.expiry_warning ? `${d.days_remaining}d (expiring soon)` : `${d.days_remaining}d`;
+
+      const badges = [
+        d.is_self_signed ? '<span class="ssl-badge warn">SELF-SIGNED</span>' : '',
+        d.is_expired ? '<span class="ssl-badge expired">EXPIRED</span>' : '',
+        d.expiry_warning ? '<span class="ssl-badge warn">EXPIRING SOON</span>' : '',
+      ].filter(Boolean).join('');
+
+      const subj = d.subject || {};
+      const iss  = d.issuer  || {};
+      const ciph = d.cipher  || {};
+
+      const sansHtml = d.sans && d.sans.length
+        ? d.sans.map(s => `<span class="san-tag">${escHtml(s)}</span>`).join('')
+        : '<span class="empty">—</span>';
+
+      const chainHtml = d.chain && d.chain.length
+        ? d.chain.map((c, i) => `<div class="chain-link"><span class="chain-idx">${i + 1}</span><span class="mono">${escHtml(c.subject)}</span><span class="chain-issuer"> ← ${escHtml(c.issuer)}</span><span class="chain-exp"> (exp: ${c.not_after.slice(0,10)})</span></div>`).join('')
+        : '<span class="empty">Chain not available</span>';
+
+      $('ssl-results').innerHTML = `
+        ${badges ? `<div class="ssl-badges">${badges}</div>` : ''}
+        <div class="ssl-grid">
+          <div class="ssl-section">
+            <div class="ssl-section-title">Certificate</div>
+            ${table([
+              ['Subject CN', subj.CN],
+              ['Subject O',  subj.O],
+              ['Subject C',  subj.C],
+              ['Issuer CN',  iss.CN],
+              ['Issuer O',   iss.O],
+              ['Serial',     d.serial],
+              ['Not Before', d.not_before ? d.not_before.slice(0,19).replace('T',' ') : null],
+              ['Not After',  d.not_after  ? d.not_after.slice(0,19).replace('T',' ')  : null],
+              ['Validity',   `<span class="${expClass}">${expLabel}</span>`],
+              ['Self-signed', d.is_self_signed ? '<span class="ssl-warn-text">Yes</span>' : 'No'],
+            ])}
+          </div>
+          <div class="ssl-section">
+            <div class="ssl-section-title">Cryptography</div>
+            ${table([
+              ['Key Type',   d.key_type],
+              ['Key Bits',   d.key_bits],
+              ['Sig Alg',    d.sig_algorithm],
+              ['TLS Version',d.tls_version],
+              ['Cipher',     ciph.name],
+              ['Cipher Bits',ciph.bits],
+            ])}
+            <div class="ssl-section-title" style="margin-top:1rem">SANs (${d.sans ? d.sans.length : 0})</div>
+            <div class="sans-list">${sansHtml}</div>
+          </div>
+        </div>
+        <div class="ssl-section" style="margin-top:1rem">
+          <div class="ssl-section-title">Certificate Chain</div>
+          ${chainHtml}
+        </div>`;
     }
 
     // DNS Enumeration
