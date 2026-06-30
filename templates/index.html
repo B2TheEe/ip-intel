@@ -10,7 +10,7 @@
   <div class="container">
     <header>
       <h1><span class="accent">&gt;_</span> IP Intel</h1>
-      <p class="subtitle">WHOIS · ASN · Geolocation · Reverse DNS</p>
+      <p class="subtitle">WHOIS · ASN · Geolocation · Reverse DNS · Port Scan</p>
     </header>
 
     <div class="search-box">
@@ -75,9 +75,26 @@
         </div>
       </div>
 
+      <!-- Port Scanner -->
+      <div class="panel port-panel">
+        <h2><span class="accent">05</span> Port Scan</h2>
+        <div class="port-controls">
+          <div class="port-presets">
+            <button class="preset-btn active" data-ports="common" onclick="setPreset(this)">Common (30)</button>
+            <button class="preset-btn" data-ports="top100" onclick="setPreset(this)">Top 100</button>
+            <button class="preset-btn" data-ports="1-1024" onclick="setPreset(this)">1–1024</button>
+            <button class="preset-btn" data-ports="custom" onclick="setPreset(this)">Custom</button>
+          </div>
+          <input type="text" id="custom-ports" class="custom-ports-input hidden" placeholder="e.g. 22,80,443,8080-8090">
+          <button class="port-scan-btn" id="port-scan-btn" onclick="runPortScan()">Scan Ports</button>
+        </div>
+        <div id="port-loading" class="loading hidden"><span class="spinner"></span> Scanning ports...</div>
+        <div id="port-results"></div>
+      </div>
+
       <!-- Raw WHOIS -->
       <div class="panel raw-panel">
-        <h2><span class="accent">05</span> Raw WHOIS
+        <h2><span class="accent">06</span> Raw WHOIS
           <button class="toggle-btn" onclick="toggleRaw()">show</button>
         </h2>
         <pre id="raw-whois" class="raw hidden"></pre>
@@ -219,6 +236,82 @@
     $('target').addEventListener('keydown', e => {
       if (e.key === 'Enter') runRecon();
     });
+
+    let currentPortSpec = 'common';
+
+    function setPreset(btn) {
+      document.querySelectorAll('.preset-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      currentPortSpec = btn.dataset.ports;
+      const customInput = $('custom-ports');
+      if (currentPortSpec === 'custom') {
+        customInput.classList.remove('hidden');
+      } else {
+        customInput.classList.add('hidden');
+      }
+    }
+
+    async function runPortScan() {
+      const target = $('target').value.trim();
+      if (!target) { showError('Enter a target first'); return; }
+
+      let ports = currentPortSpec;
+      if (ports === 'custom') {
+        ports = $('custom-ports').value.trim();
+        if (!ports) { showError('Enter custom ports'); return; }
+      }
+
+      $('port-loading').classList.remove('hidden');
+      $('port-results').innerHTML = '';
+      $('port-scan-btn').disabled = true;
+
+      try {
+        const resp = await fetch('/api/portscan', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target, ports})
+        });
+        const data = await resp.json();
+        $('port-loading').classList.add('hidden');
+        $('port-scan-btn').disabled = false;
+
+        if (data.error) {
+          $('port-results').innerHTML = err(data.error);
+          return;
+        }
+        renderPortResults(data);
+      } catch (e) {
+        $('port-loading').classList.add('hidden');
+        $('port-scan-btn').disabled = false;
+        $('port-results').innerHTML = err('Request failed: ' + e.message);
+      }
+    }
+
+    function renderPortResults(data) {
+      const summary = `<p class="port-summary">${data.open_count} open / ${data.scanned} scanned on <span class="mono accent">${data.ip}</span></p>`;
+      if (!data.open || !data.open.length) {
+        $('port-results').innerHTML = summary + '<p class="empty">No open ports found</p>';
+        return;
+      }
+      const rows = data.open.map(p => {
+        const banner = p.banner ? `<span class="banner-text">${escHtml(p.banner)}</span>` : '';
+        return `<tr>
+          <td class="port-num accent mono">${p.port}</td>
+          <td class="port-state open">open</td>
+          <td class="port-svc mono">${p.service}</td>
+          <td class="port-banner">${banner}</td>
+        </tr>`;
+      }).join('');
+      $('port-results').innerHTML = summary + `
+        <table class="port-table">
+          <thead><tr><th>Port</th><th>State</th><th>Service</th><th>Banner</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function escHtml(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
   </script>
 </body>
 </html>
