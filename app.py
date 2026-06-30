@@ -1,6 +1,7 @@
 from flask import Flask, render_template, request, jsonify
 from recon.lookup import run_all, resolve_target
 from recon.portscan import run_scan
+from recon.dns_enum import run_dns_enum
 
 app = Flask(__name__)
 
@@ -34,6 +35,20 @@ def portscan():
     results = run_scan(resolved["ip"], ports, timeout)
     results["target"] = target
     results["ip"] = resolved["ip"]
+    return jsonify(results)
+
+
+@app.route("/api/dnsenum", methods=["POST"])
+def dnsenum():
+    data = request.get_json()
+    target = (data.get("target") or "").strip()
+    brute = data.get("brute", True)
+    wordlist = (data.get("wordlist") or "small").strip()
+    if not target:
+        return jsonify({"error": "No target provided"}), 400
+    # Strip to domain only (drop scheme/path if pasted as URL)
+    target = target.replace("https://", "").replace("http://", "").split("/")[0]
+    results = run_dns_enum(target, brute=brute, wordlist=wordlist)
     return jsonify(results)
 
 

@@ -10,7 +10,7 @@
   <div class="container">
     <header>
       <h1><span class="accent">&gt;_</span> IP Intel</h1>
-      <p class="subtitle">WHOIS · ASN · Geolocation · Reverse DNS · Port Scan</p>
+      <p class="subtitle">WHOIS · ASN · Geolocation · Reverse DNS · Port Scan · DNS Enum</p>
     </header>
 
     <div class="search-box">
@@ -92,9 +92,41 @@
         <div id="port-results"></div>
       </div>
 
+      <!-- DNS Enumeration -->
+      <div class="panel dns-panel">
+        <h2><span class="accent">06</span> DNS Enumeration</h2>
+        <div class="dns-controls">
+          <div class="dns-tabs">
+            <button class="dns-tab-btn active" data-tab="records" onclick="switchDnsTab(this)">Records</button>
+            <button class="dns-tab-btn" data-tab="subdomains" onclick="switchDnsTab(this)">Subdomains</button>
+            <button class="dns-tab-btn" data-tab="zonetransfer" onclick="switchDnsTab(this)">Zone Transfer</button>
+          </div>
+          <div class="dns-run-controls">
+            <select id="dns-wordlist" class="dns-select">
+              <option value="small">Wordlist: Small (50)</option>
+              <option value="medium">Wordlist: Medium (200)</option>
+            </select>
+            <label class="dns-check-label">
+              <input type="checkbox" id="dns-brute" checked> Brute-force
+            </label>
+            <button class="port-scan-btn" id="dns-scan-btn" onclick="runDnsEnum()">Enumerate</button>
+          </div>
+        </div>
+        <div id="dns-loading" class="loading hidden"><span class="spinner"></span> Enumerating DNS...</div>
+        <div id="dns-tab-records" class="dns-tab-content">
+          <p class="empty">Run enumeration to see records.</p>
+        </div>
+        <div id="dns-tab-subdomains" class="dns-tab-content hidden">
+          <p class="empty">Run enumeration to see subdomains.</p>
+        </div>
+        <div id="dns-tab-zonetransfer" class="dns-tab-content hidden">
+          <p class="empty">Run enumeration to see zone transfer results.</p>
+        </div>
+      </div>
+
       <!-- Raw WHOIS -->
       <div class="panel raw-panel">
-        <h2><span class="accent">06</span> Raw WHOIS
+        <h2><span class="accent">07</span> Raw WHOIS
           <button class="toggle-btn" onclick="toggleRaw()">show</button>
         </h2>
         <pre id="raw-whois" class="raw hidden"></pre>
@@ -311,6 +343,110 @@
 
     function escHtml(s) {
       return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // DNS Enumeration
+    let activeDnsTab = 'records';
+
+    function switchDnsTab(btn) {
+      document.querySelectorAll('.dns-tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.dns-tab-content').forEach(c => c.classList.add('hidden'));
+      btn.classList.add('active');
+      activeDnsTab = btn.dataset.tab;
+      $('dns-tab-' + activeDnsTab).classList.remove('hidden');
+    }
+
+    async function runDnsEnum() {
+      const target = $('target').value.trim();
+      if (!target) { showError('Enter a target first'); return; }
+
+      const brute = $('dns-brute').checked;
+      const wordlist = $('dns-wordlist').value;
+
+      $('dns-loading').classList.remove('hidden');
+      $('dns-scan-btn').disabled = true;
+      ['records','subdomains','zonetransfer'].forEach(t => {
+        $('dns-tab-' + t).innerHTML = '';
+      });
+
+      try {
+        const resp = await fetch('/api/dnsenum', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({target, brute, wordlist})
+        });
+        const data = await resp.json();
+        $('dns-loading').classList.add('hidden');
+        $('dns-scan-btn').disabled = false;
+
+        if (data.error) { showError(data.error); return; }
+        renderDnsResults(data);
+      } catch (e) {
+        $('dns-loading').classList.add('hidden');
+        $('dns-scan-btn').disabled = false;
+        showError('DNS request failed: ' + e.message);
+      }
+    }
+
+    function renderDnsResults(data) {
+      // Records tab
+      const recs = data.records || {};
+      const recTypes = Object.entries(recs).filter(([, v]) => v.records && v.records.length > 0);
+      if (!recTypes.length) {
+        $('dns-tab-records').innerHTML = '<p class="empty">No records found</p>';
+      } else {
+        $('dns-tab-records').innerHTML = recTypes.map(([type, val]) => {
+          const rows = val.records.map(r => {
+            if (typeof r === 'object') {
+              if (type === 'MX') return `<div class="dns-record"><span class="dns-prio">${r.priority}</span> ${escHtml(r.exchange)}</div>`;
+              if (type === 'SOA') return `<div class="dns-record soa-record">
+                <span class="dns-field">mname</span> ${escHtml(r.mname)}<br>
+                <span class="dns-field">rname</span> ${escHtml(r.rname)}<br>
+                <span class="dns-field">serial</span> ${r.serial} &nbsp;
+                <span class="dns-field">refresh</span> ${r.refresh} &nbsp;
+                <span class="dns-field">retry</span> ${r.retry}
+              </div>`;
+              return `<div class="dns-record">${escHtml(JSON.stringify(r))}</div>`;
+            }
+            return `<div class="dns-record">${escHtml(String(r))}</div>`;
+          }).join('');
+          return `<div class="dns-rtype-block"><span class="dns-rtype">${type}</span>${rows}</div>`;
+        }).join('');
+      }
+
+      // Subdomains tab
+      const brute = data.brute;
+      if (!brute) {
+        $('dns-tab-subdomains').innerHTML = '<p class="empty">Brute-force was disabled</p>';
+      } else if (!brute.found || !brute.found.length) {
+        $('dns-tab-subdomains').innerHTML = `<p class="port-summary">0 found / ${brute.checked} checked</p><p class="empty">No subdomains found</p>`;
+      } else {
+        const rows = brute.found.map(s =>
+          `<tr><td class="mono accent">${escHtml(s.subdomain)}</td><td class="mono">${s.ips.join(', ')}</td></tr>`
+        ).join('');
+        $('dns-tab-subdomains').innerHTML =
+          `<p class="port-summary">${brute.found_count} found / ${brute.checked} checked</p>
+           <table class="port-table"><thead><tr><th>Subdomain</th><th>IPs</th></tr></thead><tbody>${rows}</tbody></table>`;
+      }
+
+      // Zone transfer tab
+      const zt = data.zone_transfer || {};
+      if (!zt.attempts || !zt.attempts.length) {
+        $('dns-tab-zonetransfer').innerHTML = '<p class="empty">No nameservers to try</p>';
+      } else {
+        $('dns-tab-zonetransfer').innerHTML = zt.attempts.map(a => {
+          const status = a.success
+            ? `<span class="open">VULNERABLE</span>`
+            : `<span class="dns-refused">refused</span>`;
+          const records = a.success && a.records.length
+            ? `<pre class="raw" style="margin-top:.5rem;max-height:200px">${escHtml(a.records.join('\n'))}</pre>`
+            : '';
+          return `<div class="zt-attempt"><span class="mono">${escHtml(a.ns)}</span> — ${status}${a.error ? ` <span class="dns-err">${escHtml(a.error)}</span>` : ''}${records}</div>`;
+        }).join('');
+      }
+
+      // Switch to records tab
+      document.querySelector('[data-tab="records"]').click();
     }
   </script>
 </body>
